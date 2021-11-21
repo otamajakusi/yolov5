@@ -62,6 +62,7 @@ def run(weights=ROOT / 'yolov5s.pt',  # model.pt path(s)
         half=False,  # use FP16 half-precision inference
         dnn=False,  # use OpenCV DNN for ONNX inference
         ):
+    print(imgsz)
     source = str(source)
     save_img = not nosave and not source.endswith('.txt')  # save inference images
     is_file = Path(source).suffix[1:] in (IMG_FORMATS + VID_FORMATS)
@@ -100,6 +101,8 @@ def run(weights=ROOT / 'yolov5s.pt',  # model.pt path(s)
     if pt and device.type != 'cpu':
         model(torch.zeros(1, 3, *imgsz).to(device).type_as(next(model.model.parameters())))  # warmup
     dt, seen = [0.0, 0.0, 0.0], 0
+
+
     for path, im, im0s, vid_cap, s in dataset:
         t1 = time_sync()
         im = torch.from_numpy(im).to(device)
@@ -123,6 +126,7 @@ def run(weights=ROOT / 'yolov5s.pt',  # model.pt path(s)
         # Second-stage classifier (optional)
         # pred = utils.general.apply_classifier(pred, classifier_model, im, im0s)
 
+        results = []
         # Process predictions
         for i, det in enumerate(pred):  # per image
             seen += 1
@@ -150,6 +154,17 @@ def run(weights=ROOT / 'yolov5s.pt',  # model.pt path(s)
 
                 # Write results
                 for *xyxy, conf, cls in reversed(det):
+                    x, y, x2, y2 = (
+                        float(xyxy[0]),
+                        float(xyxy[1]),
+                        float(xyxy[2]),
+                        float(xyxy[3]),
+                    )
+                    box = {
+                        "box": [x, y, x2 - x, y2 - y],
+                        "class_id": int(cls),
+                    }
+                    results.append(box)
                     if save_txt:  # Write to file
                         xywh = (xyxy2xywh(torch.tensor(xyxy).view(1, 4)) / gn).view(-1).tolist()  # normalized xywh
                         line = (cls, *xywh, conf) if save_conf else (cls, *xywh)  # label format
@@ -199,6 +214,8 @@ def run(weights=ROOT / 'yolov5s.pt',  # model.pt path(s)
         LOGGER.info(f"Results saved to {colorstr('bold', save_dir)}{s}")
     if update:
         strip_optimizer(weights)  # update model (to fix SourceChangeWarning)
+
+    return results
 
 
 def parse_opt():
