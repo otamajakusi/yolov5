@@ -1,0 +1,2 @@
+docker build -t yolov5.container .
+docker run -it --rm -v $(pwd):/yolov5:ro -v $(pwd)/runs:/yolov5/runs -w /yolov5 yolov5.container bash
