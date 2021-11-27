@@ -16,6 +16,9 @@ import argparse
 import os
 import sys
 from pathlib import Path
+import time
+import math
+import queue
 
 import cv2
 import torch
@@ -103,6 +106,11 @@ def run(weights=ROOT / 'yolov5s.pt',  # model.pt path(s)
     dt, seen = [0.0, 0.0, 0.0], 0
 
 
+    start_time = time.time()
+    quit = False
+    square = ""
+    square_list = []
+    q = queue.Queue()
     for path, im, im0s, vid_cap, s in dataset:
         t1 = time_sync()
         im = torch.from_numpy(im).to(device)
@@ -174,18 +182,71 @@ def run(weights=ROOT / 'yolov5s.pt',  # model.pt path(s)
                     if save_img or save_crop or view_img:  # Add bbox to image
                         c = int(cls)  # integer class
                         label = None if hide_labels else (names[c] if hide_conf else f'{names[c]} {conf:.2f}')
-                        annotator.box_label(xyxy, label, color=colors(c, True))
+                        w1 = (x2-x) / 9
+                        h1 = (y2-y) / 9
+
+                        def is_outside(x, y, x2, y2):
+                            w = vid_cap.get(cv2.CAP_PROP_FRAME_WIDTH)
+                            h = vid_cap.get(cv2.CAP_PROP_FRAME_HEIGHT)
+                            if math.isclose(x, 0.0, abs_tol=1e-2):
+                                return True
+                            if math.isclose(y, 0.0, abs_tol=1e-2):
+                                return True
+                            if math.isclose(x2, w, abs_tol=1e-2):
+                                return True
+                            if math.isclose(y2, h, abs_tol=1e-2):
+                                return True
+                            return False
+
+                        if not is_outside(x, y, x2, y2):
+                            for sq in square_list.copy():
+                                if time.time() > sq["expire"]:
+                                    square_list.remove(sq)
+                                sq_x = sq["square"][0]
+                                sq_y = sq["square"][1]
+                                rect = [
+                                    x+w1*sq_x,
+                                    y+h1*sq_y,
+                                    x+w1*(sq_x+1),
+                                    y+h1*(sq_y+1),
+                                ]
+                                annotator.box_label(rect, color=colors(c, True))
+                            '''
+                            for r in range(9):
+                                rect = [x, y+h1*r, x2, y+h1*(r+1)]
+                                annotator.box_label(rect, color=colors(c, True))
+                            for r in range(9):
+                                rect = [x+w1*r, y, x+w1*(r+1), y2]
+                                annotator.box_label(rect, color=colors(c, True))
+                            '''
                         if save_crop:
                             save_one_box(xyxy, imc, file=save_dir / 'crops' / names[c] / f'{p.stem}.jpg', BGR=True)
 
             # Print time (inference-only)
-            LOGGER.info(f'{s}Done. ({t3 - t2:.3f}s)')
+            #LOGGER.info(f'{s}Done. ({t3 - t2:.3f}s)')
 
             # Stream results
             im0 = annotator.result()
             if view_img:
+                # fps = vid_cap.get(cv2.CAP_PROP_FPS)
+                fps = 31
                 cv2.imshow(str(p), im0)
-                cv2.waitKey(1)  # 1 millisecond
+                elapsed = time.time() - start_time
+                sleep_secs = max(1, int((1 / fps - elapsed) * 1000))
+                key= cv2.waitKey(sleep_secs) & 0xFF
+                if key == ord("q"):
+                    quit = True
+                    break
+                try:
+                    _ = int(chr(key))
+                    square += chr(key)
+                    if len(square) == 2:
+                        sq_x = 9-int(square[0])
+                        sq_y = int(square[1])-1
+                        square = ""
+                        square_list.append({"square": [sq_x, sq_y], "expire": time.time()+1})
+                except Exception:
+                    pass
 
             # Save results (image with detections)
             if save_img:
@@ -205,6 +266,10 @@ def run(weights=ROOT / 'yolov5s.pt',  # model.pt path(s)
                             save_path += '.mp4'
                         vid_writer[i] = cv2.VideoWriter(save_path, cv2.VideoWriter_fourcc(*'mp4v'), fps, (w, h))
                     vid_writer[i].write(im0)
+        # print(f"{time.time()-start_time:.3f}")
+        start_time = time.time()
+        if quit:
+            break
 
     # Print results
     t = tuple(x / seen * 1E3 for x in dt)  # speeds per image
