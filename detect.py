@@ -89,6 +89,7 @@ def run(weights=ROOT / 'yolov5s.pt',  # model.pt path(s)
     if pt:
         model.model.half() if half else model.model.float()
 
+    start_time = time.time()
     # Dataloader
     if webcam:
         view_img = check_imshow()
@@ -105,8 +106,6 @@ def run(weights=ROOT / 'yolov5s.pt',  # model.pt path(s)
         model(torch.zeros(1, 3, *imgsz).to(device).type_as(next(model.model.parameters())))  # warmup
     dt, seen = [0.0, 0.0, 0.0], 0
 
-
-    start_time = time.time()
     quit = False
     square = ""
     square_list = []
@@ -198,7 +197,10 @@ def run(weights=ROOT / 'yolov5s.pt',  # model.pt path(s)
                                 return True
                             return False
 
-                        if not is_outside(x, y, x2, y2):
+                        # print(f"{w1=},{h1=}, {w1/h1:.2f}")
+                        if w1 / h1 < 0.94 and not is_outside(x, y, x2, y2):
+                            annotator.box_label([x,y, x2, y2], color=colors(128, True))
+
                             for sq in square_list.copy():
                                 if time.time() > sq["expire"]:
                                     square_list.remove(sq)
@@ -231,8 +233,10 @@ def run(weights=ROOT / 'yolov5s.pt',  # model.pt path(s)
                 # fps = vid_cap.get(cv2.CAP_PROP_FPS)
                 fps = 31
                 cv2.imshow(str(p), im0)
-                elapsed = time.time() - start_time
-                sleep_secs = max(1, int((1 / fps - elapsed) * 1000))
+                elapsed = (time.time() - start_time) * 1000 # msec
+                play_time = int(vid_cap.get(cv2.CAP_PROP_POS_MSEC))
+                sleep_secs = max(1, int(play_time - elapsed))
+                # print(f"{play_time=},{elapsed=},{start_time=},{sleep_secs=}")
                 key= cv2.waitKey(sleep_secs) & 0xFF
                 if key == ord("q"):
                     quit = True
@@ -244,7 +248,7 @@ def run(weights=ROOT / 'yolov5s.pt',  # model.pt path(s)
                         sq_x = 9-int(square[0])
                         sq_y = int(square[1])-1
                         square = ""
-                        square_list.append({"square": [sq_x, sq_y], "expire": time.time()+1})
+                        square_list.append({"square": [sq_x, sq_y], "expire": time.time()+2})
                 except Exception:
                     pass
 
@@ -267,7 +271,6 @@ def run(weights=ROOT / 'yolov5s.pt',  # model.pt path(s)
                         vid_writer[i] = cv2.VideoWriter(save_path, cv2.VideoWriter_fourcc(*'mp4v'), fps, (w, h))
                     vid_writer[i].write(im0)
         # print(f"{time.time()-start_time:.3f}")
-        start_time = time.time()
         if quit:
             break
 
