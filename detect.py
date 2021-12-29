@@ -19,6 +19,7 @@ from pathlib import Path
 import time
 import math
 import queue
+import re
 
 import cv2
 import torch
@@ -64,6 +65,7 @@ def run(weights=ROOT / 'yolov5s.pt',  # model.pt path(s)
         hide_conf=False,  # hide confidences
         half=False,  # use FP16 half-precision inference
         dnn=False,  # use OpenCV DNN for ONNX inference
+        audio=None,
         ):
     print(imgsz)
     source = str(source)
@@ -97,7 +99,7 @@ def run(weights=ROOT / 'yolov5s.pt',  # model.pt path(s)
         dataset = LoadStreams(source, img_size=imgsz, stride=stride, auto=pt and not jit)
         bs = len(dataset)  # batch_size
     else:
-        dataset = LoadImages(source, img_size=imgsz, stride=stride, auto=pt and not jit)
+        dataset = LoadImages(source, img_size=imgsz, stride=stride, auto=pt and not jit, audio=audio)
         bs = 1  # batch_size
     vid_path, vid_writer = [None] * bs, [None] * bs
 
@@ -110,7 +112,9 @@ def run(weights=ROOT / 'yolov5s.pt',  # model.pt path(s)
     square = ""
     square_list = []
     q = queue.Queue()
-    for path, im, im0s, vid_cap, s in dataset:
+
+    pa = re.compile(r'.*?(ichi|ni|san|yon|go|roku|nana|hachi|kyu)\s*(ichi|ni|san|yon|go|roku|nana|hachi|kyu)')
+    for path, im, im0s, vid_cap, s, voice_text in dataset:
         t1 = time_sync()
         im = torch.from_numpy(im).to(device)
         im = im.half() if half else im.float()  # uint8 to fp16/32
@@ -119,6 +123,32 @@ def run(weights=ROOT / 'yolov5s.pt',  # model.pt path(s)
             im = im[None]  # expand for batch dim
         t2 = time_sync()
         dt[0] += t2 - t1
+
+        # voice_text
+        if voice_text:
+            print(voice_text)
+        while True:
+            ma = pa.match(voice_text)
+            if ma:
+                print(f"match! {ma.group(1)}{ma.group(2)}")
+                yomi_dict = {
+                        "ichi": 1,
+                        "ni":2,
+                        "san":3,
+                        "yon":4,
+                        "go":5,
+                        "roku":6,
+                        "nana":7,
+                        "hachi":8,
+                        "kyu":9
+                        }
+                square_list.append({
+                    "square": [9-yomi_dict[ma.group(1)], yomi_dict[ma.group(2)]-1],
+                    "expire": time.time()+2
+                    })
+                voice_text = voice_text[ma.span()[1]:]
+            else:
+                break
 
         # Inference
         visualize = increment_path(save_dir / Path(path).stem, mkdir=True) if visualize else False
@@ -313,6 +343,7 @@ def parse_opt():
     parser.add_argument('--hide-conf', default=False, action='store_true', help='hide confidences')
     parser.add_argument('--half', action='store_true', help='use FP16 half-precision inference')
     parser.add_argument('--dnn', action='store_true', help='use OpenCV DNN for ONNX inference')
+    parser.add_argument('--audio', type=str, help='audio file')
     opt = parser.parse_args()
     opt.imgsz *= 2 if len(opt.imgsz) == 1 else 1  # expand
     print_args(FILE.stem, opt)

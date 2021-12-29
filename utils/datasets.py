@@ -29,7 +29,10 @@ from utils.augmentations import Albumentations, augment_hsv, copy_paste, letterb
 from utils.general import (LOGGER, check_dataset, check_requirements, check_yaml, clean_str, segments2boxes, xyn2xy,
                            xywh2xyxy, xywhn2xyxy, xyxy2xywhn)
 from utils.torch_utils import torch_distributed_zero_first
-from ffpyplayer.player import MediaPlayer
+
+import pyaudio
+import wave
+
 
 # Parameters
 HELP_URL = 'https://github.com/ultralytics/yolov5/wiki/Train-Custom-Data'
@@ -156,10 +159,10 @@ class _RepeatSampler:
         while True:
             yield from iter(self.sampler)
 
-
-class LoadImages:
+from .audio_process_mixin import AudioProcessMixin
+class LoadImages(AudioProcessMixin):
     # YOLOv5 image/video dataloader, i.e. `python detect.py --source image.jpg/vid.mp4`
-    def __init__(self, path, img_size=640, stride=32, auto=True):
+    def __init__(self, path, img_size=640, stride=32, auto=True, audio=None):
         p = str(Path(path).resolve())  # os-agnostic absolute path
         if '*' in p:
             files = sorted(glob.glob(p, recursive=True))  # glob
@@ -182,7 +185,7 @@ class LoadImages:
         self.mode = 'image'
         self.auto = auto
         if any(videos):
-            self.new_video(videos[0])  # new video
+            self.new_video(videos[0], audio)  # new video
         else:
             self.cap = None
         assert self.nf > 0, f'No images or videos found in {p}. ' \
@@ -210,7 +213,7 @@ class LoadImages:
                     path = self.files[self.count]
                     self.new_video(path)
                     ret_val, img0 = self.cap.read()
-                    audio_frame, val = self.player.get_frame()
+            voice_text = self.get_frame()
 
             self.frame += 1
             s = f'video {self.count + 1}/{self.nf} ({self.frame}/{self.frames}) {path}: '
@@ -229,16 +232,42 @@ class LoadImages:
         img = img.transpose((2, 0, 1))[::-1]  # HWC to CHW, BGR to RGB
         img = np.ascontiguousarray(img)
 
-        return path, img, img0, self.cap, s
+        return path, img, img0, self.cap, s, voice_text
 
-    def new_video(self, path):
+    def new_video(self, path, audio):
         self.frame = 0
         self.cap = cv2.VideoCapture(path)
-        self.player = MediaPlayer(path)
+        if audio:
+            wf = wave.open(audio, "rb")
+            p = pyaudio.PyAudio()
+            self.wf = wf
+            self.p = p
+            self.stream = p.open(
+                format=p.get_format_from_width(wf.getsampwidth()),
+                channels=wf.getnchannels(),
+                rate=wf.getframerate(),
+                output=True,
+                stream_callback=self._stream_cb,
+            )
+
         self.frames = int(self.cap.get(cv2.CAP_PROP_FRAME_COUNT))
 
     def __len__(self):
         return self.nf  # number of files
+
+    def _stream_cb(self, in_data, frame_count, time_info, status):
+        data = self.wf.readframes(frame_count)
+        wf = self.wf
+        self.process_audio(
+            data[:], wf.getsampwidth(), wf.getnchannels(), wf.getframerate()
+        )
+        return (data, pyaudio.paContinue)
+
+    def get_frame(self):
+        try:
+            return self.queue.get(block=False)
+        except Exception:
+            return ""
 
 
 class LoadWebcam:  # for inference
